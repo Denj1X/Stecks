@@ -48,6 +48,14 @@ contract Staking is Token  {
 		Fixe = IERC20(address(this));
     }
 
+	function addReward(uint256 amount) public {
+		require(amount > 0, "Amount to be added must be a pozitive number!");
+		require(hasRole(ADMIN_ROLE, msg.sender), "Address doesn't have admin role");
+
+		totalStaked += amount;
+		_burn(msg.sender, amount);
+	}
+
 	function deposit(uint256 amount) external {
     	Staker storage staker = stakers[msg.sender];
     	address thisAddress = address(this);
@@ -57,7 +65,8 @@ contract Staking is Token  {
         	Fixe.transfer(msg.sender, staker.cumulativeRewards);
         	staker.balance += amount;
         	Fixe.transferFrom(from, thisAddress, amount); // Use FixeToken instead of Fixe
-    	} else {
+    	} 
+		else {
         	Fixe.transferFrom(from, thisAddress, amount); // Use FixeToken instead of Fixe
         	staker.balance = amount;
         	stakersArr.push(from);
@@ -122,11 +131,7 @@ contract Staking is Token  {
         	Staker storage staker = stakers[stakerAddress];
 
         	if (staker.balance > 0) {
-            	uint256 stakerRewards = calculateStakerRewards(
-                staker,
-                currentTime,
-                totalRewards
-            	);
+            	uint256 stakerRewards = calculateStakerRewards(staker, currentTime, totalRewards);
 
             // Add rewards to staker's balance and cumulative rewards
             	staker.cumulativeRewards += stakerRewards;
@@ -140,11 +145,8 @@ contract Staking is Token  {
     	emit DividendPaid(amountToTransfer);
 	}
 
-	function calculateStakerRewards(
-    Staker storage staker,
-    uint256 currentTime,
-    uint256 totalRewards
-) internal view returns (uint256) {
+	function calculateStakerRewards(Staker storage staker, uint256 currentTime, uint256 totalRewards) 
+	internal view returns (uint256) {
     	uint256 stakingPeriod = currentTime - staker.depositTime;
 
     	if (stakingPeriod >= YEAR_IN_SECONDS) {
@@ -167,15 +169,8 @@ contract Staking is Token  {
     	}
 	}
 
-	function getStaker(address _address)
-    external
-    view
-    returns (
-        uint256 balance,
-        uint256 depositTime,
-        uint256 cumulativeRewards
-    )
-	{
+	function getStaker(address _address) external view
+    returns (uint256 balance, uint256 depositTime, uint256 cumulativeRewards) {
     	Staker storage staker = stakers[_address];
     	return (staker.balance, staker.depositTime, staker.cumulativeRewards);
 	}

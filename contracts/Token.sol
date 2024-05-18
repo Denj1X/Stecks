@@ -21,7 +21,7 @@ contract Token is ERC20Capped, AccessControl {
 	constructor(string memory name, 
 		string memory symbol, 
 		uint256 initialSupply, 
-		uint256 cap) ERC20(name, symbol) ERC20Capped(cap * (10 ** 18)) {
+		uint256 cap) ERC20(name, symbol) ERC20Capped(cap * (10 ** 18))  {
 			_grantRole(MINT_ROLE, msg.sender);
 			_grantRole(BURN_ROLE, msg.sender);
 			owners[msg.sender] = true;
@@ -30,22 +30,17 @@ contract Token is ERC20Capped, AccessControl {
 			}
 	}
 
-	modifier onlyOwner(address owner) {
-		require(owners[owner] == true, "Not owner");
-		_;
-	}
-
 	modifier validAddress(address _addr) {
         require(_addr != address(0), "Not valid address");
         _;
     }
 
 	function changeOwner(address _newOwner)
-        internal
-        onlyOwner(msg.sender)
-        validAddress(_newOwner)
-    {
-        owners[_newOwner] = true;
+        public
+        validAddress(_newOwner) {
+        _grantRole(MINT_ROLE, _newOwner);
+		_grantRole(BURN_ROLE, _newOwner);
+		owners[_newOwner] = true;
     }
 
 	function payFee() public payable {
@@ -53,14 +48,16 @@ contract Token is ERC20Capped, AccessControl {
         changeOwner(msg.sender);
 	}
 
-	function mint(address to, uint256 amount) external onlyOwner(msg.sender) {
+	function mint(address to, uint256 amount) external  {
         require(hasRole(MINT_ROLE, msg.sender), "MyToken: must have MINT_ROLE to mint");
+		require(owners[msg.sender] == true, "This address is not a co-owner");
         _mint(to, amount);
         emit Mint(to, amount);
     }
 	
-	function burn(address from, uint256 amount) external onlyOwner(msg.sender) {
+	function burn(address from, uint256 amount) external {
 		require(hasRole(BURN_ROLE, msg.sender), "MyToken: must have BURN_ROLE to burn");
+		require(owners[msg.sender] == true, "This address is not a co-owner");
 		_burn(from, amount);
 		emit Burn(from, amount);
 	}

@@ -2,6 +2,8 @@
 pragma solidity >=0.8.4;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./Token.sol";
 
 /*
@@ -9,6 +11,8 @@ Using ReentrancyGuard and Pausable contracts from OpenZeppelin for
 safe measures
 */
 contract Staking is Token  {
+	using Math for uint256;
+
 	bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 	struct user {
         uint256 stakedAmount;
@@ -17,11 +21,23 @@ contract Staking is Token  {
     }
 
     mapping(address => user) public users;
+	address[] public stakersArr;
 
     uint256 public totalStakedAmount;
     uint256 public totalLoanedAmount;
     uint256 public rewardRate;
     uint256 public totalRewardAmount;
+	uint256 public totalRewardPaid;
+
+	address public contractAddress;
+
+	uint256 public constant YEAR_IN_SECONDS = 31536000;
+    uint256 public constant SIX_MONTHS_IN_SECONDS = 15768000;
+    uint256 public constant THREE_MONTHS_IN_SECONDS = 7884000;
+    uint256 public constant ONE_MONTH_IN_SECONDS = 2628000;
+    uint256 public constant ONE_WEEK_IN_SECONDS = 604800;
+
+	IERC20 public Fixe;
 
     event UpdatedTotalStakedAmount(uint256 totalStakedAmount);
     event UpdatedUserInfo(
@@ -30,16 +46,32 @@ contract Staking is Token  {
         uint256 lastRewardUpdate
     );
 
+
     constructor(
         string memory _name,
         string memory _symbol,
         uint256 _initialSupply,
         uint256 _cap,
-        uint256 _rewardRate
+        uint256 _rewardRate,
+		address _contAddress
     ) Token(_name, _symbol, _initialSupply, _cap) {
 		_grantRole(ADMIN_ROLE, msg.sender);
         rewardRate = _rewardRate;
+		contractAddress = _contAddress;
     }
+
+	function getStaker(address _address) external view returns(
+		uint256 stakedAmount,
+		uint256 rewardAmount,
+		uint256 lastRewardUpdate
+	) {
+		user storage staker = users[_address];
+		return (staker.stakedAmount, staker.rewardAmount, staker.lastRewardUpdate);
+	}
+
+	function isStaker(address _address) external view returns(bool) {
+		return users[_address].stakedAmount > 0;
+	}
 
     function addReward(uint256 _amount) external {
 		require(hasRole(ADMIN_ROLE, msg.sender), "You can't add a reward");
@@ -143,6 +175,7 @@ contract Staking is Token  {
         }
 
         // send the amount to the user
+		//nu sunt necesare neaparat
         _mint(msg.sender, amountToUnstake);
 
         emit UpdatedTotalStakedAmount(totalStakedAmount);
@@ -175,5 +208,40 @@ contract Staking is Token  {
             users[msg.sender].lastRewardUpdate
         );
     }
-}
 
+	//totally optional, rather for project points
+
+	function transferETH(address payable recipient, uint256 amount) external {
+        require(hasRole(ADMIN_ROLE, msg.sender), "You must have the ADMIN_ROLE to transfer ETH");
+        require(address(this).balance >= amount, "Insufficient contract balance to transfer ETH");
+
+        // Transfer ETH to the recipient
+        recipient.transfer(amount);
+    }
+
+	//addEth method
+	function addETH() external payable {
+        require(msg.value > 0, "Must send a positive amount of ETH");
+    }
+
+	function currentContractBalance() public view returns (uint) {
+        return address(this).balance; // returns the balance of the contract itself using the `balance` and `this` keywords.
+    }
+
+    receive() external payable {}
+
+	// Function to transfer ERC20 tokens from the contract to a specified recipient
+	function transferERC20(address token, address recipient, uint256 amount) external {
+        require(hasRole(ADMIN_ROLE, msg.sender), "You must have the ADMIN_ROLE to transfer ERC20 tokens");
+        require(IERC20(token).balanceOf(address(this)) >= amount, "Insufficient contract balance to transfer ERC20 tokens");
+
+        // Transfer ERC20 tokens to the recipient
+        IERC20(token).transfer(recipient, amount);
+    }
+
+	// Example function to add ERC20 tokens to the contract's balance
+    // This could be used to fund the contract for token rewards
+	function addERC20(address token, uint256 amount) external {
+        require(IERC20(token).transferFrom(msg.sender, address(this), amount), "Token transfer failed");
+    }
+}

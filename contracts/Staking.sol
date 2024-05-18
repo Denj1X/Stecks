@@ -14,234 +14,213 @@ contract Staking is Token  {
 	using Math for uint256;
 
 	bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-	struct user {
-        uint256 stakedAmount;
-        uint256 rewardAmount;
-        uint256 lastRewardUpdate;
+	struct Staker {
+        uint256 balance;
+        uint256 depositTime;
+        uint256 cumulativeRewards;
     }
 
-    mapping(address => user) public users;
-	address[] public stakersArr;
-
-    uint256 public totalStakedAmount;
-    uint256 public totalLoanedAmount;
-    uint256 public rewardRate;
-    uint256 public totalRewardAmount;
-	uint256 public totalRewardPaid;
-
-	address public contractAddress;
-
-	uint256 public constant YEAR_IN_SECONDS = 31536000;
+    mapping(address => Staker) public stakers;
+    uint256 public stakersCount;
+    uint256 public totalStaked;
+    uint256 public totalRewardPaid;
+    address[] public stakersArr;
+    uint256 public constant YEAR_IN_SECONDS = 31536000;
     uint256 public constant SIX_MONTHS_IN_SECONDS = 15768000;
     uint256 public constant THREE_MONTHS_IN_SECONDS = 7884000;
     uint256 public constant ONE_MONTH_IN_SECONDS = 2628000;
     uint256 public constant ONE_WEEK_IN_SECONDS = 604800;
+    address public fixeAddress;
+    IERC20 public Fixe;
 
-	IERC20 public Fixe;
-
-    event UpdatedTotalStakedAmount(uint256 totalStakedAmount);
-    event UpdatedUserInfo(
-        uint256 stakedAmount,
-        uint256 rewardAmount,
-        uint256 lastRewardUpdate
-    );
+	event Deposit(address _address, uint256 amount);
+	event Withdraw(address _address, uint256 amount);
+	event Collected(address sender, uint256 reward);
+	event DividendPaid(uint256 amountToTransfer);
 
 
     constructor(
         string memory _name,
         string memory _symbol,
         uint256 _initialSupply,
-        uint256 _cap,
-        uint256 _rewardRate,
-		address _contAddress
+        uint256 _cap
     ) Token(_name, _symbol, _initialSupply, _cap) {
 		_grantRole(ADMIN_ROLE, msg.sender);
-        rewardRate = _rewardRate;
-		contractAddress = _contAddress;
+		Fixe = IERC20(address(this));
     }
 
-	function getStaker(address _address) external view returns(
-		uint256 stakedAmount,
-		uint256 rewardAmount,
-		uint256 lastRewardUpdate
-	) {
-		user storage staker = users[_address];
-		return (staker.stakedAmount, staker.rewardAmount, staker.lastRewardUpdate);
+	function deposit(uint256 amount) external {
+    	Staker storage staker = stakers[msg.sender];
+    	address thisAddress = address(this);
+    	address from = msg.sender;
+
+    	if (staker.balance > 0 && staker.cumulativeRewards > 0) {
+        	Fixe.transfer(msg.sender, staker.cumulativeRewards);
+			(bool success, uint256 result) = Math.tryAdd(staker.balance, amount);
+			if(result > 0) {
+				staker.balance = result;
+			}
+			else require(success, "overflow");
+		
+        	Fixe.transferFrom(from, thisAddress, amount); // Use FixeToken instead of Fixe
+    	}
+
+		else {
+        	Fixe.transferFrom(from, thisAddress, amount); // Use FixeToken instead of Fixe
+        	staker.balance = amount;
+        	stakersArr.push(from);
+        	stakersCount++;
+        	staker.depositTime = block.timestamp;
+    	}
+
+		(bool ok, uint256 val) = Math.tryAdd(totalStaked, amount);
+		if(val > 0) {
+			totalStaked = val;
+		}
+		else require(ok, "overflow");
+		
+    	emit Deposit(msg.sender, amount);
 	}
 
-	function isStaker(address _address) external view returns(bool) {
-		return users[_address].stakedAmount > 0;
+	function withdraw(uint256 amount) external {
+    	address sender = msg.sender;
+    	Staker storage staker = stakers[sender];
+    	address thisAddress = address(this);
+
+    	require(staker.balance >= amount, "Insufficient balance");
+    	require(amount > 0, "Amount must be greater than zero");
+
+    	Fixe.transfer(sender, amount);
+
+		(bool success, uint256 result) = Math.trySub(staker.balance, amount);
+		if(result > 0) {
+			staker.balance = result;
+		}
+		else require(success, "overflow");
+
+		(bool success1, uint256 result1) = Math.trySub(totalStaked, amount);
+		if(result1 > 0) {
+			staker.balance = result1;
+		}
+		else require(success1, "overflow");
+    	staker.depositTime = block.timestamp;
+    	emit Withdraw(thisAddress, amount);
 	}
 
-    function addReward(uint256 _amount) external {
-		require(hasRole(ADMIN_ROLE, msg.sender), "You can't add a reward");
-        require(_amount > 0, "Amount to be added must be a pozitive number!");
+	function collect() external {
+    	address sender = msg.sender;
+    	Staker storage staker = stakers[sender];
+    	uint256 reward = staker.cumulativeRewards;
 
-        totalRewardAmount += _amount;
-        _burn(msg.sender, _amount);
-    }
+    	require(reward > 0, "Nothing to collect");
 
-	function computeReward(address _user) public view returns (uint256) {
-        require(
-            users[_user].stakedAmount > 0,
-            "User must stake before computing the reward!"
-        );
+   	 	Fixe.transfer(sender, reward);
+    	staker.cumulativeRewards = 0; // Reset cumulative rewards to zero
+    	emit Collected(sender, reward);
+	}
 
-        return
-            ((block.timestamp - users[_user].lastRewardUpdate) *
-                users[_user].stakedAmount *
-                rewardRate) / totalStakedAmount;
-    }
+	function restake() external {
+    	address sender = msg.sender;
+    	Staker storage staker = stakers[sender];
+    	uint256 reward = staker.cumulativeRewards;
+    	require(reward >= 0, "Nothing to collect");
 
-	function reinvestReward() external {
-        require(
-            users[msg.sender].stakedAmount > 0,
-            "You must stake before reinvesting the reward!"
-        );
+    	staker.balance = staker.balance.add(reward);
+    	staker.cumulativeRewards = 0;
 
-        // make sure the reward value is up to date
-        users[msg.sender].rewardAmount += computeReward(msg.sender);
+    	emit Deposit(msg.sender, reward);
+	}
 
-        require(users[msg.sender].rewardAmount <= totalRewardAmount, "The reward is not available!");
+	function distributeRewards(uint256 rewardAmount) external {
+    	require(totalStaked > 0, "No stakers to distribute rewards");
+    	require(rewardAmount > 0, "Reward amount must be greater than zero");
 
-        totalRewardAmount -= users[msg.sender].rewardAmount;
+    	uint256 currentTime = block.timestamp;
+    	uint256 totalRewards = rewardAmount;
+    	uint256 paidRewards;
 
-        // increase the stake from the reward, reset the reward and the date
-        totalStakedAmount += users[msg.sender].rewardAmount;
-        users[msg.sender].stakedAmount += users[msg.sender].rewardAmount;
-        users[msg.sender].rewardAmount = 0;
-        users[msg.sender].lastRewardUpdate = block.timestamp;
+    	for (uint256 i = 0; i < stakersArr.length; i++) {
+       		address stakerAddress = stakersArr[i];
+        	Staker storage staker = stakers[stakerAddress];
 
-        emit UpdatedTotalStakedAmount(totalStakedAmount);
+        	if (staker.balance > 0) {
+            	uint256 stakerRewards = calculateStakerRewards(
+                staker,
+                currentTime,
+                totalRewards
+            	);
 
-        emit UpdatedUserInfo(
-            users[msg.sender].stakedAmount,
-            users[msg.sender].rewardAmount,
-            users[msg.sender].lastRewardUpdate
-        );
-    }
+            // Add rewards to staker's balance and cumulative rewards
+            	staker.cumulativeRewards = staker.cumulativeRewards.add(
+                stakerRewards
+            	);
+            	paidRewards = paidRewards.add(stakerRewards);
+        	}
+    	}
 
-    function stake(uint256 _amount) external {
-        require(_amount > 0, "Amount to be staked must be a pozitive number!");
+    	uint256 amountToTransfer = totalRewards.sub(paidRewards);
+    	Fixe.transferFrom(msg.sender, address(this), amountToTransfer);
+    	totalRewardPaid = totalRewardPaid.add(amountToTransfer);
+    	emit DividendPaid(amountToTransfer);
+	}
 
-        require(
-            _amount <= balanceOf(msg.sender),
-            "You don't have enough balance to stake!"
-        );
+	function calculateStakerRewards(
+    Staker storage staker,
+    uint256 currentTime,
+    uint256 totalRewards
+) internal view returns (uint256) {
+    	uint256 stakingPeriod = currentTime.sub(staker.depositTime);
 
-        // if the user already has a staked amount compute his reward for the
-        // old stake amount
-        if (users[msg.sender].stakedAmount != 0) {
-            users[msg.sender].rewardAmount += computeReward(msg.sender);
-        }
+    	if (stakingPeriod >= YEAR_IN_SECONDS) {
+        	return totalRewards;
+    	} else if (stakingPeriod >= SIX_MONTHS_IN_SECONDS) {
+        	return
+            	totalRewards.mul(staker.balance).mul(75).div(totalStaked).div(
+                	100
+            	);
+    	} else if (stakingPeriod >= THREE_MONTHS_IN_SECONDS) {
+        	return
+            	totalRewards.mul(staker.balance).mul(50).div(totalStaked).div(
+                	100
+            	);
+    	} else if (stakingPeriod >= ONE_MONTH_IN_SECONDS) {
+        	return
+            	totalRewards.mul(staker.balance).mul(25).div(totalStaked).div(
+                	100
+            	);
+    	} else if (stakingPeriod >= ONE_WEEK_IN_SECONDS) {
+        	return
+            	totalRewards.mul(staker.balance).mul(10).div(totalStaked).div(
+                	100
+            	);
+    	} else {
+        	return
+            	totalRewards.mul(staker.balance).mul(5).div(totalStaked).div(
+                	100
+            	);
+    	}
+	}
 
-        // add the user stake to the pool and update the last reward update
-        totalStakedAmount += _amount;
-        users[msg.sender].stakedAmount += _amount;
-        users[msg.sender].lastRewardUpdate = block.timestamp;
+	function getStaker(address _address)
+    external
+    view
+    returns (
+        uint256 balance,
+        uint256 depositTime,
+        uint256 cumulativeRewards
+    )
+	{
+    	Staker storage staker = stakers[_address];
+    	return (staker.balance, staker.depositTime, staker.cumulativeRewards);
+	}
 
-        // remove the amount from the user's balance
-        _burn(msg.sender, _amount);
+	function isStaker(address _address) external view returns (bool) {
+    	return stakers[_address].balance > 0;
+	}
 
-        emit UpdatedTotalStakedAmount(totalStakedAmount);
-
-        emit UpdatedUserInfo(
-            users[msg.sender].stakedAmount,
-            users[msg.sender].rewardAmount,
-            users[msg.sender].lastRewardUpdate
-        );
-    }
-
-    function unstake(uint256 _amount) external {
-        require(_amount > 0, "Amount to be unstaked must be a pozitive number!");
-
-        require(_amount <= users[msg.sender].stakedAmount, "You don't have enough staked amount to unstake!");
-        // compute the reward to be up to date and reset the last reward update
-        // time before removing part of the stake to avoid giving the user a
-        // smaller reward at a later time
-        users[msg.sender].rewardAmount += computeReward(msg.sender);
-        users[msg.sender].lastRewardUpdate = block.timestamp;
-
-        // remove _amount from the user's stake
-        totalStakedAmount -= _amount;
-        users[msg.sender].stakedAmount -= _amount;
-
-        // if the user removes all the stake, send him the reward as well
-        uint256 amountToUnstake = _amount;
-        if (users[msg.sender].stakedAmount == 0 && users[msg.sender].rewardAmount <= totalRewardAmount) {
-            totalRewardAmount -= users[msg.sender].rewardAmount;
-            amountToUnstake += users[msg.sender].rewardAmount;
-            users[msg.sender].rewardAmount = 0;
-        }
-
-        // send the amount to the user
-		//nu sunt necesare neaparat
-        _mint(msg.sender, amountToUnstake);
-
-        emit UpdatedTotalStakedAmount(totalStakedAmount);
-
-        emit UpdatedUserInfo(
-            users[msg.sender].stakedAmount,
-            users[msg.sender].rewardAmount,
-            users[msg.sender].lastRewardUpdate
-        );
-    }
-
-    function withdrawReward() external {
-        require(users[msg.sender].stakedAmount > 0, "You must stake before withdrawing the reward!");
-        // compute the reward to be up to date
-        uint256 reward = users[msg.sender].rewardAmount + computeReward(msg.sender);
-
-        users[msg.sender].lastRewardUpdate = block.timestamp;
-
-        require(reward <= totalRewardAmount, "The reward is not available!");
-
-        totalRewardAmount -= reward;
-        // send the reward to the user
-        _mint(msg.sender, reward);
-        // reset the reward count
-        users[msg.sender].rewardAmount = 0;
-
-        emit UpdatedUserInfo(
-            users[msg.sender].stakedAmount,
-            users[msg.sender].rewardAmount,
-            users[msg.sender].lastRewardUpdate
-        );
-    }
-
-	//totally optional, rather for project points
-
-	function transferETH(address payable recipient, uint256 amount) external {
-        require(hasRole(ADMIN_ROLE, msg.sender), "You must have the ADMIN_ROLE to transfer ETH");
-        require(address(this).balance >= amount, "Insufficient contract balance to transfer ETH");
-
-        // Transfer ETH to the recipient
-        recipient.transfer(amount);
-    }
-
-	//addEth method
-	function addETH() external payable {
-        require(msg.value > 0, "Must send a positive amount of ETH");
-    }
-
-	function currentContractBalance() public view returns (uint) {
-        return address(this).balance; // returns the balance of the contract itself using the `balance` and `this` keywords.
-    }
-
-    receive() external payable {}
-
-	// Function to transfer ERC20 tokens from the contract to a specified recipient
-	function transferERC20(address token, address recipient, uint256 amount) external {
-        require(hasRole(ADMIN_ROLE, msg.sender), "You must have the ADMIN_ROLE to transfer ERC20 tokens");
-        require(IERC20(token).balanceOf(address(this)) >= amount, "Insufficient contract balance to transfer ERC20 tokens");
-
-        // Transfer ERC20 tokens to the recipient
-        IERC20(token).transfer(recipient, amount);
-    }
-
-	// Example function to add ERC20 tokens to the contract's balance
-    // This could be used to fund the contract for token rewards
-	function addERC20(address token, uint256 amount) external {
-        require(IERC20(token).transferFrom(msg.sender, address(this), amount), "Token transfer failed");
-    }
+	function getReward(address _address) external view returns (uint256) {
+    	Staker storage staker = stakers[_address];
+    	uint256 reward = staker.cumulativeRewards;
+    	return reward;
+	}
 }

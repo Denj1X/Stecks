@@ -13,7 +13,7 @@ contract Token is ERC20Capped, AccessControl {
 	bytes32 public constant MINT_ROLE = keccak256("MINT_ROLE");
 	bytes32 public constant BURN_ROLE = keccak256("BURN_ROLE");
 	mapping (address => bool) public owners;
-	uint256 public HOST_FEE = 1000 gwei;
+	uint256 public HOST_FEE = 1000 wei;
 
 	event Mint(address indexed to, uint256 amount);
 	event Burn(address indexed from, uint256 amount);
@@ -55,7 +55,7 @@ contract Token is ERC20Capped, AccessControl {
         emit Mint(to, amount);
     }
 	
-	function burn(address from, uint256 amount) external {
+	function burn(address from, uint256 amount) public {
 		require(hasRole(BURN_ROLE, msg.sender), "MyToken: must have BURN_ROLE to burn");
 		require(owners[msg.sender] == true, "This address is not a co-owner");
 		_burn(from, amount);

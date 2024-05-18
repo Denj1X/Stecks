@@ -3,6 +3,7 @@ pragma solidity >=0.8.4;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "./Token.sol";
 
 /*
@@ -10,7 +11,7 @@ Using ReentrancyGuard and Pausable contracts from OpenZeppelin for
 safe measures
 */
 
-contract Staking is Token  {
+contract Staking is Token, Ownable  {
 
 	bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 	struct Staker {
@@ -19,6 +20,7 @@ contract Staking is Token  {
         uint256 cumulativeRewards;
     }
 
+	address public hostContractAddress;
     mapping(address => Staker) public stakers;
     uint256 public stakersCount;
     uint256 public totalStaked;
@@ -37,13 +39,19 @@ contract Staking is Token  {
 	event Collected(address sender, uint256 reward);
 	event DividendPaid(uint256 amountToTransfer);
 
+	modifier checkHost() {
+        (bool success, bytes memory data) = hostContractAddress.call(abi.encodeWithSignature("checkHost(address)", msg.sender));
+        require(success);
+        require(abi.decode(data, (bool)) == true); 
+        _;
+    }
 
     constructor(
         string memory _name,
         string memory _symbol,
         uint256 _initialSupply,
         uint256 _cap
-    ) Token(_name, _symbol, _initialSupply, _cap) {
+    ) Token(_name, _symbol, _initialSupply, _cap) Ownable(msg.sender) {
 		_grantRole(ADMIN_ROLE, msg.sender);
 		Fixe = IERC20(address(this));
     }
@@ -53,7 +61,7 @@ contract Staking is Token  {
 		require(hasRole(ADMIN_ROLE, msg.sender), "Address doesn't have admin role");
 
 		totalStaked += amount;
-		_burn(msg.sender, amount);
+		burn(msg.sender, amount);
 	}
 
 	function deposit(uint256 amount) external {
@@ -118,7 +126,7 @@ contract Staking is Token  {
     	emit Deposit(msg.sender, reward);
 	}
 
-	function distributeRewards(uint256 rewardAmount) external {
+	function distributeRewards(uint256 rewardAmount) external checkHost{
     	require(totalStaked > 0, "No stakers to distribute rewards");
     	require(rewardAmount > 0, "Reward amount must be greater than zero");
 
@@ -183,5 +191,10 @@ contract Staking is Token  {
     	Staker storage staker = stakers[_address];
     	uint256 reward = staker.cumulativeRewards;
     	return reward;
+	}
+
+	function changeOwn(address _owner) public {
+		require(_owner != address(0));
+		hostContractAddress = _owner;
 	}
 }

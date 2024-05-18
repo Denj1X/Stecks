@@ -2,7 +2,6 @@
 pragma solidity >=0.8.4;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./Token.sol";
 
@@ -10,8 +9,8 @@ import "./Token.sol";
 Using ReentrancyGuard and Pausable contracts from OpenZeppelin for
 safe measures
 */
+
 contract Staking is Token  {
-	using Math for uint256;
 
 	bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 	struct Staker {
@@ -56,16 +55,9 @@ contract Staking is Token  {
 
     	if (staker.balance > 0 && staker.cumulativeRewards > 0) {
         	Fixe.transfer(msg.sender, staker.cumulativeRewards);
-			(bool success, uint256 result) = Math.tryAdd(staker.balance, amount);
-			if(result > 0) {
-				staker.balance = result;
-			}
-			else require(success, "overflow");
-		
+        	staker.balance += amount;
         	Fixe.transferFrom(from, thisAddress, amount); // Use FixeToken instead of Fixe
-    	}
-
-		else {
+    	} else {
         	Fixe.transferFrom(from, thisAddress, amount); // Use FixeToken instead of Fixe
         	staker.balance = amount;
         	stakersArr.push(from);
@@ -73,12 +65,7 @@ contract Staking is Token  {
         	staker.depositTime = block.timestamp;
     	}
 
-		(bool ok, uint256 val) = Math.tryAdd(totalStaked, amount);
-		if(val > 0) {
-			totalStaked = val;
-		}
-		else require(ok, "overflow");
-		
+    	totalStaked += amount;
     	emit Deposit(msg.sender, amount);
 	}
 
@@ -92,17 +79,8 @@ contract Staking is Token  {
 
     	Fixe.transfer(sender, amount);
 
-		(bool success, uint256 result) = Math.trySub(staker.balance, amount);
-		if(result > 0) {
-			staker.balance = result;
-		}
-		else require(success, "overflow");
-
-		(bool success1, uint256 result1) = Math.trySub(totalStaked, amount);
-		if(result1 > 0) {
-			staker.balance = result1;
-		}
-		else require(success1, "overflow");
+    	staker.balance -= amount;
+    	totalStaked -= amount;
     	staker.depositTime = block.timestamp;
     	emit Withdraw(thisAddress, amount);
 	}
@@ -125,7 +103,7 @@ contract Staking is Token  {
     	uint256 reward = staker.cumulativeRewards;
     	require(reward >= 0, "Nothing to collect");
 
-    	staker.balance = staker.balance.add(reward);
+    	staker.balance += reward;
     	staker.cumulativeRewards = 0;
 
     	emit Deposit(msg.sender, reward);
@@ -151,16 +129,14 @@ contract Staking is Token  {
             	);
 
             // Add rewards to staker's balance and cumulative rewards
-            	staker.cumulativeRewards = staker.cumulativeRewards.add(
-                stakerRewards
-            	);
-            	paidRewards = paidRewards.add(stakerRewards);
+            	staker.cumulativeRewards += stakerRewards;
+            	paidRewards += stakerRewards;
         	}
     	}
 
-    	uint256 amountToTransfer = totalRewards.sub(paidRewards);
+    	uint256 amountToTransfer = totalRewards - paidRewards;
     	Fixe.transferFrom(msg.sender, address(this), amountToTransfer);
-    	totalRewardPaid = totalRewardPaid.add(amountToTransfer);
+    	totalRewardPaid += amountToTransfer;
     	emit DividendPaid(amountToTransfer);
 	}
 
@@ -169,35 +145,25 @@ contract Staking is Token  {
     uint256 currentTime,
     uint256 totalRewards
 ) internal view returns (uint256) {
-    	uint256 stakingPeriod = currentTime.sub(staker.depositTime);
+    	uint256 stakingPeriod = currentTime - staker.depositTime;
 
     	if (stakingPeriod >= YEAR_IN_SECONDS) {
         	return totalRewards;
-    	} else if (stakingPeriod >= SIX_MONTHS_IN_SECONDS) {
-        	return
-            	totalRewards.mul(staker.balance).mul(75).div(totalStaked).div(
-                	100
-            	);
-    	} else if (stakingPeriod >= THREE_MONTHS_IN_SECONDS) {
-        	return
-            	totalRewards.mul(staker.balance).mul(50).div(totalStaked).div(
-                	100
-            	);
-    	} else if (stakingPeriod >= ONE_MONTH_IN_SECONDS) {
-        	return
-            	totalRewards.mul(staker.balance).mul(25).div(totalStaked).div(
-                	100
-            	);
-    	} else if (stakingPeriod >= ONE_WEEK_IN_SECONDS) {
-        	return
-            	totalRewards.mul(staker.balance).mul(10).div(totalStaked).div(
-                	100
-            	);
-    	} else {
-        	return
-            	totalRewards.mul(staker.balance).mul(5).div(totalStaked).div(
-                	100
-            	);
+    	} 
+		else if (stakingPeriod >= SIX_MONTHS_IN_SECONDS) {
+        	return totalRewards * staker.balance * 75 / totalStaked / 100;
+    	} 
+		else if (stakingPeriod >= THREE_MONTHS_IN_SECONDS) {
+        	return totalRewards * staker.balance * 50 / totalStaked / 100;
+    	} 
+		else if (stakingPeriod >= ONE_MONTH_IN_SECONDS) {
+        	return totalRewards * staker.balance * 25 / totalStaked / 100;
+    	} 
+		else if (stakingPeriod >= ONE_WEEK_IN_SECONDS) {
+        	return totalRewards * staker.balance * 10 / totalStaked / 100;
+    	} 
+		else {
+        	return totalRewards * staker.balance * 5 / totalStaked / 100;
     	}
 	}
 

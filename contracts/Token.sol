@@ -12,7 +12,9 @@ Using ERC20Capped for maximum cap per token
 contract Token is ERC20Capped, AccessControl {
 	bytes32 public constant MINT_ROLE = keccak256("MINT_ROLE");
 	bytes32 public constant BURN_ROLE = keccak256("BURN_ROLE");
-	address public owner;
+	mapping (address => bool) public owners;
+	uint256 public HOST_FEE = 1000 gwei;
+
 	event Mint(address indexed to, uint256 amount);
 	event Burn(address indexed from, uint256 amount);
 
@@ -22,14 +24,14 @@ contract Token is ERC20Capped, AccessControl {
 		uint256 cap) ERC20(name, symbol) ERC20Capped(cap * (10 ** 18)) {
 			_grantRole(MINT_ROLE, msg.sender);
 			_grantRole(BURN_ROLE, msg.sender);
-			owner = msg.sender;
+			owners[msg.sender] = true;
 			if (initialSupply <= cap) {
             	ERC20._mint(_msgSender(), initialSupply * (10**18));
 			}
 	}
 
-	modifier onlyOwner {
-		require(msg.sender == owner, "Not owner");
+	modifier onlyOwner(address owner) {
+		require(owners[owner] == true, "Not owner");
 		_;
 	}
 
@@ -39,20 +41,25 @@ contract Token is ERC20Capped, AccessControl {
     }
 
 	function changeOwner(address _newOwner)
-        public
-        onlyOwner
+        internal
+        onlyOwner(msg.sender)
         validAddress(_newOwner)
     {
-        owner = _newOwner;
+        owners[_newOwner] = true;
     }
 
-	function mint(address to, uint256 amount) public {
+	function payFee() public payable {
+		require(msg.value >= HOST_FEE);
+        changeOwner(msg.sender);
+	}
+
+	function mint(address to, uint256 amount) external onlyOwner(msg.sender) {
         require(hasRole(MINT_ROLE, msg.sender), "MyToken: must have MINT_ROLE to mint");
         _mint(to, amount);
         emit Mint(to, amount);
     }
 	
-	function burn(address from, uint256 amount) public {
+	function burn(address from, uint256 amount) external onlyOwner(msg.sender) {
 		require(hasRole(BURN_ROLE, msg.sender), "MyToken: must have BURN_ROLE to burn");
 		_burn(from, amount);
 		emit Burn(from, amount);
